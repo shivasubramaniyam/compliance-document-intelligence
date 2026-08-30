@@ -1,0 +1,69 @@
+# Configuration for Compliance Document Intelligence
+# Phase 2: Compliance rules will be defined here
+
+project:
+  name: "Compliance Document Intelligence"
+  version: "0.1.0"
+  phase: 1
+
+data:
+  raw_dir: "data/raw"
+  synthetic_dir: "data/synthetic"
+  processed_dir: "data/processed"
+  train_split: 0.8
+  test_split: 0.2
+
+document_types:
+  sop:
+    display_name: "Standard Operating Procedure"
+    required_fields:
+      - title
+      - version
+      - effective_date
+      - owner
+      - department
+      - approval_date
+      - review_cycle
+    optional_fields:
+      - scope
+      - references
+      - approval_signatures
+  adverse_event:
+    display_name: "Adverse Event Report"
+    required_fields:
+      - event_id
+      - date_reported
+      - product_id
+      - batch_id
+      - severity
+      - description
+      - reporter
+      - follow_up_status
+    optional_fields:
+      - patient_info
+      - outcome
+      - regulatory_filed
+  audit_finding:
+    display_name: "Audit Finding Report"
+    required_fields:
+      - audit_id
+      - audit_date
+      - finding_category
+      - severity
+      - description
+      - corrective_action
+      - due_date
+      - responsible_party
+    optional_fields:
+      - root_cause
+      - evidence
+      - status
+
+extraction:
+  # Phase 2: Will use fine-tuned NER / LLM
+  method: "rule_based"
+  spacy_model: "en_core_web_sm"
+
+evaluation:
+  output_dir: "data/processed/evaluation"
+  metrics_file: "baseline_metrics.json"

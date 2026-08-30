@@ -1,0 +1,25 @@
+# Compliance Document Intelligence - Phase 1 Dependencies
+# Python 3.11+
+
+# Document parsing
+pdfplumber>=0.10.3
+PyMuPDF>=1.23.7
+python-docx>=1.1.0
+reportlab>=4.0.8
+
+# NLP
+spacy>=3.7.2
+
+# Data handling
+pandas>=2.1.4
+pydantic>=2.5.3
+
+# Synthetic data generation
+faker>=21.0.0
+jinja2>=3.1.3
+
+# Evaluation
+scikit-learn>=1.3.2
+
+# Utilities
+pyyaml>=6.0.1

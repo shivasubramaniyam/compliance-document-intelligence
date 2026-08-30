@@ -1,0 +1,97 @@
+# Compliance Rules Configuration — Phase 2 Placeholder
+# These rules will be used for document validation and gap detection.
+
+# Rules are organized by document type
+rules:
+  sop:
+    - rule_id: SOP-001
+      description: "SOP must have a valid version number"
+      field: version
+      validation: "regex: ^\\d+\\.\\d+$"
+      severity: high
+
+    - rule_id: SOP-002
+      description: "Effective date must be in the future or present"
+      field: effective_date
+      validation: "date >= today"
+      severity: high
+
+    - rule_id: SOP-003
+      description: "Review cycle must be one of: Annual, Semi-annual, Quarterly, Biennial"
+      field: review_cycle
+      validation: "enum: [Annual, Semi-annual, Quarterly, Biennial]"
+      severity: medium
+
+    - rule_id: SOP-004
+      description: "SOP must have an owner assigned"
+      field: owner
+      validation: "required"
+      severity: critical
+
+    - rule_id: SOP-005
+      description: "Approval date must be on or before effective date"
+      field: approval_date
+      validation: "date <= effective_date"
+      severity: high
+
+  adverse_event:
+    - rule_id: AE-001
+      description: "Event ID must match format AE-YYYY-NNNNN"
+      field: event_id
+      validation: "regex: ^AE-\\d{4}-\\d{5}$"
+      severity: critical
+
+    - rule_id: AE-002
+      description: "Severity must be one of: critical, high, medium, low"
+      field: severity
+      validation: "enum: [critical, high, medium, low]"
+      severity: high
+
+    - rule_id: AE-003
+      description: "Follow-up status must be valid"
+      field: follow_up_status
+      validation: "enum: [open, in_progress, closed, pending_review]"
+      severity: medium
+
+    - rule_id: AE-004
+      description: "Date reported must not be in the future"
+      field: date_reported
+      validation: "date <= today"
+      severity: high
+
+    - rule_id: AE-005
+      description: "Description must be at least 20 characters"
+      field: description
+      validation: "min_length: 20"
+      severity: medium
+
+  audit_finding:
+    - rule_id: AUD-001
+      description: "Audit ID must match format AUD-YYYY-NNNNN"
+      field: audit_id
+      validation: "regex: ^AUD-\\d{4}-\\d{5}$"
+      severity: critical
+
+    - rule_id: AUD-002
+      description: "Due date must be in the future"
+      field: due_date
+      validation: "date >= today"
+      severity: high
+
+    - rule_id: AUD-003
+      description: "Severity must be one of: critical, high, medium, low"
+      field: severity
+      validation: "enum: [critical, high, medium, low]"
+      severity: high
+
+    - rule_id: AUD-004
+      description: "Corrective action must be provided for critical/high findings"
+      field: corrective_action
+      validation: "required_if: severity in [critical, high]"
+      severity: critical
+
+    - rule_id: AUD-005
+      description: "Due date must be within 180 days of audit date for critical findings"
+      field: due_date
+      validation: "date_diff: audit_date <= 180d when severity=critical"
+      severity: high
