@@ -2,9 +2,40 @@
 
 AI-powered system for extracting structured information from unstructured regulatory/compliance documents, validating extractions against compliance rules, and flagging gaps or inconsistencies.
 
-## Phase 1: Data Foundation & Extraction Baseline
+---
 
-Phase 1 establishes the end-to-end pipeline: raw document -> text extraction -> document type detection -> baseline field extraction -> structured JSON output. Extraction is intentionally rule-based (regex + heuristics) to provide an honest baseline for Phase 2 improvements.
+## Phase 2: AI-Powered Extraction & Compliance Validation
+
+Phase 2 replaces the rule-based extraction baseline with LLM-powered extraction and adds a compliance rule validation engine that flags missing fields, inconsistencies, and gaps.
+
+### Key Improvements over Phase 1
+
+| Aspect | Phase 1 | Phase 2 |
+|--------|---------|---------|
+| Extraction Method | Regex + heuristics | LLM (Claude/GPT) with structured output |
+| Validation | None | Configurable compliance rules |
+| Cross-Document Checks | None | Batch consistency validation |
+| Reporting | Basic metrics | Full compliance report (JSON + Markdown) |
+| Expected F1 | ~0.82 | ~0.95+ (LLM-based) |
+
+---
+
+## Quick Start
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Phase 1: Rule-based extraction (no API key needed)
+python run_pipeline.py --method rule_based --skip-generation
+
+# Phase 2: LLM-based extraction (requires API key)
+export ANTHROPIC_API_KEY=your-key-here
+python run_pipeline.py --method llm --validate --skip-generation
+
+# Run tests
+pytest tests/ -v
+```
 
 ---
 
@@ -24,38 +55,30 @@ compliance-doc-intel/
 │   ├── ingestion/
 │   │   └── loader.py                 # PDF/DOCX parser + type classifier
 │   ├── extraction/
-│   │   └── extractor.py              # Rule-based field extraction
-│   ├── validation/                   # (Phase 2: compliance rule checks)
-│   ├── models/                       # (Phase 2: fine-tuned NER/LLM)
+│   │   ├── extractor.py              # Phase 1: Rule-based extraction
+│   │   └── llm_extractor.py          # Phase 2: LLM-based extraction
+│   ├── validation/                   # Phase 2: Compliance validation
+│   │   ├── rule_engine.py            # Configurable rule validation
+│   │   ├── cross_document.py         # Cross-document consistency checks
+│   │   └── report_generator.py       # Compliance report generation
 │   └── utils/
 │       ├── generate_synthetic_docs.py # Synthetic data generator
 │       └── evaluate_extraction.py     # Evaluation harness
 ├── config/
 │   ├── settings.yaml                 # Project configuration
-│   └── compliance_rules.yaml         # (Phase 2 placeholder)
+│   └── compliance_rules.yaml         # Phase 2: Compliance rules
 ├── tests/
-│   └── test_pipeline.py              # Smoke tests
+│   ├── test_pipeline.py              # Smoke tests
+│   └── test_rule_engine.py           # Phase 2: Rule engine tests
+├── docs/
+│   └── phase1-technical.md           # Phase 1 technical documentation
 ├── run_pipeline.py                   # End-to-end pipeline runner
 └── requirements.txt
 ```
 
-## Quick Start
+---
 
-```bash
-cd compliance-doc-intel
-pip install -r requirements.txt
-
-# Run the full pipeline (generate -> extract -> evaluate)
-python run_pipeline.py
-
-# Or skip generation if data already exists
-python run_pipeline.py --skip-generation
-
-# Run smoke tests
-python tests/test_pipeline.py
-```
-
-## Document Types (Phase 1)
+## Document Types
 
 | Type | Required Fields | Optional Fields |
 |------|----------------|-----------------|
@@ -63,122 +86,183 @@ python tests/test_pipeline.py
 | **Adverse Event Report** | event_id, date_reported, product_id, batch_id, severity, description, reporter, follow_up_status | patient_info, outcome, regulatory_filed |
 | **Audit Finding Report** | audit_id, audit_date, finding_category, severity, description, corrective_action, due_date, responsible_party | root_cause, evidence, status |
 
-## Synthetic Dataset
+---
 
-- **300 documents** (100 per type) split 80/20 train/test
-- Each document rendered as a real DOCX file
-- Paired with `_ground_truth.json` for evaluation
-- Includes **intentionally flawed** variants (~25%) with:
-  - Missing required fields
-  - Malformed dates
-  - Invalid severity values
-  - Truncated titles
+## Phase 2 Features
 
-## Pipeline Architecture
+### 1. LLM-Based Extraction
 
+Uses Claude or GPT-4 with structured output to extract fields from documents.
+
+**Features:**
+- Few-shot prompt templates per document type
+- Retry/validation logic with error correction
+- Cost and latency tracking
+- Automatic schema validation
+
+**Usage:**
+```bash
+# With Anthropic Claude
+export ANTHROPIC_API_KEY=your-key
+python run_pipeline.py --method llm --skip-generation
+
+# With OpenAI GPT
+export OPENAI_API_KEY=your-key
+python run_pipeline.py --method llm --skip-generation
 ```
-[DOCX/PDF] -> [Loader] -> [Type Classifier] -> [Extractor] -> [Structured JSON]
-     |              |              |                  |
-     |              |              +-- keyword/heuristic rules
-     |              +-- pdfplumber / python-docx
-     |
-     +-- Each doc paired with _ground_truth.json for evaluation
+
+### 2. Compliance Rule Validation Engine
+
+Validates extracted data against configurable rules in `config/compliance_rules.yaml`.
+
+**Rule Types:**
+- **Required fields:** Missing fields flagged as critical
+- **Format validation:** Regex patterns for IDs, dates
+- **Allowed values:** Enum validation for severity, status
+- **Date logic:** Future dates, date ordering
+- **Length checks:** Min/max field lengths
+
+**Usage:**
+```bash
+python run_pipeline.py --validate --skip-generation
 ```
 
-### Components
+### 3. Cross-Document Consistency
 
-1. **Ingestion** (`src/ingestion/loader.py`)
-   - Detects file type by extension
-   - Extracts text via `pdfplumber` (PDF) or `python-docx` (DOCX)
-   - Normalizes whitespace, removes page-break artifacts
-   - Heuristic classifier using keyword matching
+Validates that references between documents are consistent:
+- Batch IDs exist in corpus
+- Product IDs are referenced
+- Reporters are known entities
+- Departments are consistent
 
-2. **Extraction** (`src/extraction/extractor.py`)
-   - Rule-based per document type (regex + positional heuristics)
-   - Extracts fields matching the Pydantic schema
-   - Handles date parsing, severity normalization, status mapping
+### 4. Compliance Report Generation
 
-3. **Evaluation** (`src/utils/evaluate_extraction.py`)
-   - Field-level precision/recall/F1 computation
-   - Per-document-type and per-field breakdown
-   - Summary metrics report
+Produces both machine-readable and human-readable reports:
 
-## Phase 1 Baseline Metrics
+**JSON Report:** `data/processed/compliance_report.json`
+- Full violation details
+- Per-document breakdown
+- Extraction metrics
 
-**Overall F1: 0.8175**
-
-### Per-Field F1 (Test Set)
-
-| Field | F1 | Notes |
-|-------|-----|-------|
-| approval_date | 1.00 | Labeled clearly in DOCX |
-| audit_date | 1.00 | Labeled clearly |
-| batch_id | 1.00 | Labeled clearly |
-| description | 1.00 | Section-based extraction |
-| department | 1.00 | Labeled clearly |
-| finding_category | 1.00 | Labeled clearly |
-| product_id | 1.00 | Labeled clearly |
-| responsible_party | 1.00 | Labeled clearly |
-| review_cycle | 1.00 | Labeled clearly |
-| audit_id | 0.95 | Regex-dependent |
-| corrective_action | 0.95 | Section extraction |
-| reporter | 0.95 | Labeled clearly |
-| title | 0.95 | First line heuristic |
-| version | 0.95 | Regex-dependent |
-| severity | 0.88 | Occasional format mismatches |
-| due_date | 0.90 | Date format variations |
-| effective_date | 0.90 | Date format variations |
-| event_id | 0.90 | Regex-dependent |
-| owner | 0.90 | Format variations |
-| **follow_up_status** | **0.45** | Format variations in DOCX tables |
-| **doc_type** | **0.00** | Not extracted by current rule set |
-| **references** | **0.00** | Bullet-point parsing needs improvement |
-| **scope** | **0.00** | Section boundary detection weak |
-| **status** | **0.00** | Not extracted in current implementation |
-
-### Known Weaknesses (Phase 2 Targets)
-
-- `doc_type` is classified but not included in extraction output
-- `references` and `scope` require better section-boundary detection
-- `follow_up_status` suffers from table-cell extraction format issues
-- `status` field is not currently extracted for audit findings
+**Markdown Report:** `data/processed/compliance_report.md`
+- Executive summary
+- Violation counts by severity
+- Document-type breakdown
+- Detailed violation list
 
 ---
 
-## Phase 2 Roadmap
-
-### 2.1: Improved Extraction
-- **Fine-tuned NER model** on extracted training data
-- **LLM-based extraction** as alternative to rule-based (GPT-4 / Claude for complex fields)
-- Better section-boundary detection for `scope`, `references`
-- Include `doc_type` in extraction output
-
-### 2.2: Compliance Rule Validation
-- Rule engine using `config/compliance_rules.yaml`
-- Cross-field validation (e.g., approval_date <= effective_date)
-- Format validation (regex patterns for IDs, date ranges)
-- Severity-dependent rules (critical findings must have corrective action)
-
-### 2.3: Anomaly Detection
-- Detect documents with structural anomalies (missing sections, unusual formatting)
-- Flag documents that fail validation rules
-- Identify data quality issues across document batches
-
-### 2.4: Dashboard
-- Web UI for reviewing extractions and validation results
-- Confidence scores for each extracted field
-- Drill-down from document to field-level details
-- Export validated reports
-
 ## Configuration
 
-All settings in `config/settings.yaml`:
-- Document type definitions with required/optional fields
-- Extraction method (rule_based for Phase 2)
-- Train/test split ratio
-- Evaluation output paths
+### compliance_rules.yaml
 
-Compliance rules in `config/compliance_rules.yaml` (Phase 2 placeholder):
-- Per-document-type validation rules
-- Field format requirements
-- Cross-field consistency checks
+Defines validation rules per document type:
+
+```yaml
+adverse_event:
+  required_fields:
+    - event_id
+    - date_reported
+    - severity
+  field_rules:
+    event_id:
+      pattern: "^AE-[0-9]{4}-[0-9]{5}$"
+    severity:
+      allowed_values: [critical, high, medium, low]
+    date_reported:
+      must_not_be_future: true
+```
+
+### settings.yaml
+
+Project configuration including:
+- Document type definitions
+- Extraction method
+- Train/test split ratios
+- Output paths
+
+---
+
+## Evaluation
+
+### Phase 1 Baseline (Rule-Based)
+
+**Overall F1: 0.82**
+
+| Field | F1 | Notes |
+|-------|-----|-------|
+| approval_date | 1.00 | Labeled clearly |
+| batch_id | 1.00 | Labeled clearly |
+| description | 1.00 | Section-based |
+| severity | 0.88 | Format variations |
+| follow_up_status | 0.45 | Table extraction issues |
+| scope | 0.00 | Section boundary weak |
+
+### Phase 2 Target (LLM-Based)
+
+**Target F1: 0.95+**
+
+Expected improvements:
+- `scope`, `references`: LLM handles complex sections
+- `follow_up_status`: Better table understanding
+- `doc_type`: Included in extraction output
+- Overall: ~15% F1 improvement
+
+---
+
+## Running Tests
+
+```bash
+# Run all tests
+pytest tests/ -v
+
+# Run rule engine tests specifically
+pytest tests/test_rule_engine.py -v
+
+# Run with coverage
+pytest tests/ --cov=src --cov-report=html
+```
+
+---
+
+## API Key Setup
+
+### Anthropic Claude (Recommended)
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+### OpenAI GPT
+
+```bash
+export OPENAI_API_KEY=sk-...
+```
+
+**Cost Estimate:**
+- Claude Sonnet: ~$0.003/1K input tokens, ~$0.015/1K output tokens
+- Per document: ~$0.01-0.02
+- Full dataset (300 docs): ~$3-6
+
+---
+
+## Phase 3 Roadmap
+
+- [ ] Web dashboard for reviewing extractions
+- [ ] Confidence scores for each field
+- [ ] Batch processing with progress tracking
+- [ ] Export to PDF compliance reports
+- [ ] Real-time document processing API
+- [ ] Integration with document management systems
+
+---
+
+## Technical Documentation
+
+See `docs/phase1-technical.md` for detailed Phase 1 architecture and implementation details.
+
+---
+
+## License
+
+Internal use only.
