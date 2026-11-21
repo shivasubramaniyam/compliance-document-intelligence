@@ -2,16 +2,23 @@
 Compliance Document Intelligence — End-to-End Pipeline
 
 Supports both Phase 1 (rule-based) and Phase 2 (LLM-based) extraction.
+Supports local Ollama (default, no API keys needed) and OpenRouter (cloud API).
 
 Usage:
     # Phase 1: Rule-based extraction
     python run_pipeline.py --method rule_based
     
-    # Phase 2: LLM-based extraction (requires API key)
+    # Phase 2: LLM-based extraction with local Ollama (no API key needed)
     python run_pipeline.py --method llm --skip-generation
     
-    # Phase 2: With validation
+    # Phase 2: With compliance validation using Ollama
     python run_pipeline.py --method llm --validate --skip-generation
+    
+    # Phase 2: Specifying an Ollama model or host
+    python run_pipeline.py --method llm --model llama3.2:3b --skip-generation
+    
+    # Phase 2: Using OpenRouter cloud API instead
+    python run_pipeline.py --method llm --provider openrouter --skip-generation
     
     # Skip generation if data already exists
     python run_pipeline.py --skip-generation
@@ -48,10 +55,16 @@ def step2_ingest_and_extract(
     output_dir: Path,
     method: str = "rule_based",
     validate: bool = False,
+    provider: str = "ollama",
+    model: str | None = None,
+    ollama_url: str = "http://localhost:11434",
 ) -> dict:
     """Step 2: Ingest documents and run extraction."""
+    display_info = f"{method}"
+    if method == "llm":
+        display_info += f" via {provider}" + (f" ({model})" if model else "")
     print("\n" + "=" * 60)
-    print(f"STEP 2: Ingestion & Extraction ({method})")
+    print(f"STEP 2: Ingestion & Extraction ({display_info})")
     print("=" * 60)
 
     # Import LLM extractor if needed
@@ -95,9 +108,15 @@ def step2_ingest_and_extract(
 
                     # Extract
                     if method == "llm":
-                        extracted = llm_extract_fields(doc)
-                        # Rate-limit delay between LLM calls (free tier)
-                        time.sleep(1.5)
+                        extracted = llm_extract_fields(
+                            doc,
+                            provider=provider,
+                            model=model,
+                            base_url=ollama_url,
+                        )
+                        # Rate-limit delay only for cloud free tier
+                        if provider == "openrouter":
+                            time.sleep(1.5)
                     else:
                         extracted = rule_based_extract(doc)
 
@@ -130,7 +149,8 @@ def step2_ingest_and_extract(
         metrics = get_extraction_metrics()
         llm_metrics = metrics.summary()
         print(f"\n[LLM Metrics]")
-        print(f"  API Calls: {llm_metrics['total_calls']}")
+        print(f"  Provider: {provider}")
+        print(f"  LLM Calls: {llm_metrics['total_calls']}")
         print(f"  Total Cost: ${llm_metrics['total_cost_usd']:.4f}")
         print(f"  Avg Latency: {llm_metrics['avg_latency_ms']:.0f}ms")
 
@@ -245,12 +265,20 @@ def step4_validate(
 
 
 def main():
+    import os
+
+    default_provider = os.environ.get("LLM_PROVIDER") or ("openrouter" if os.environ.get("OPENROUTER_API_KEY") else "ollama")
+
     parser = argparse.ArgumentParser(description="Compliance Document Intelligence Pipeline")
     parser.add_argument("--skip-generation", action="store_true", help="Skip data generation")
+    parser.add_argument("--skip-extraction", action="store_true", help="Skip extraction and evaluate/validate existing extracted files")
     parser.add_argument("--num-per-type", type=int, default=100, help="Documents per type")
     parser.add_argument("--synthetic-dir", type=str, default="data/synthetic", help="Synthetic data dir")
     parser.add_argument("--processed-dir", type=str, default="data/processed", help="Output dir")
     parser.add_argument("--method", choices=["rule_based", "llm"], default="rule_based", help="Extraction method")
+    parser.add_argument("--provider", choices=["ollama", "openrouter"], default=default_provider, help="LLM provider: 'ollama' (default, no API key) or 'openrouter'")
+    parser.add_argument("--model", type=str, default=None, help="LLM model name (defaults to llama3.2:3b for Ollama)")
+    parser.add_argument("--ollama-url", type=str, default=os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"), help="Ollama server URL")
     parser.add_argument("--validate", action="store_true", help="Run compliance validation (Phase 2)")
     args = parser.parse_args()
 
@@ -265,18 +293,24 @@ def main():
     print("+=" * 30)
 
     # Step 1: Generate
-    if not args.skip_generation:
+    if not args.skip_generation and not args.skip_extraction:
         step1_generate_data(synthetic_dir, num_per_type=args.num_per_type)
     else:
         print("\n[Skipping data generation]")
 
     # Step 2: Ingest + Extract
-    extraction_info = step2_ingest_and_extract(
-        synthetic_dir,
-        processed_dir,
-        method=args.method,
-        validate=args.validate,
-    )
+    if not args.skip_extraction:
+        extraction_info = step2_ingest_and_extract(
+            synthetic_dir,
+            processed_dir,
+            method=args.method,
+            validate=args.validate,
+            provider=args.provider,
+            model=args.model,
+            ollama_url=args.ollama_url,
+        )
+    else:
+        print("\n[Skipping extraction — evaluating existing extractions]")
 
     # Step 3: Evaluate
     summary = step3_evaluate(processed_dir)

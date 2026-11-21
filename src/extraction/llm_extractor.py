@@ -61,11 +61,15 @@ _load_env()
 # Configuration
 # ---------------------------------------------------------------------------
 
-# Default model — free tier on OpenRouter (updated 2026-09)
-# minimax-m3 is fast, returns clean JSON without thinking overhead
-DEFAULT_MODEL = "minimax/minimax-m3:free"
+# Ollama configuration (local, no API keys needed)
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+DEFAULT_OLLAMA_MODEL = "llama3.2:3b"
 
-# Backup free models (tried in order if default fails)
+# OpenRouter configuration (cloud API)
+DEFAULT_OPENROUTER_MODEL = "minimax/minimax-m3:free"
+DEFAULT_MODEL = DEFAULT_OPENROUTER_MODEL
+
+# Backup free models for OpenRouter (tried in order if default fails)
 BACKUP_FREE_MODELS = [
     "google/gemma-4-26b-a4b-it:free",
     "nvidia/nemotron-3.5-lightning:free",
@@ -73,6 +77,16 @@ BACKUP_FREE_MODELS = [
     "thinkingmachines/inkling:free",
     "minimax/minimax-m3:free",
 ]
+
+
+def get_default_provider() -> str:
+    """Determine the default LLM provider ('ollama' or 'openrouter')."""
+    env_provider = os.environ.get("LLM_PROVIDER")
+    if env_provider:
+        return env_provider.lower()
+    if os.environ.get("OPENROUTER_API_KEY"):
+        return "openrouter"
+    return "ollama"
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +324,65 @@ def _get_model(api_key: str) -> str:
     return _working_model
 
 
-def _call_openrouter(messages: list[dict[str, str]], api_key: str, max_tokens: int = 1024) -> tuple[str, int, int, float]:
+def _call_ollama(
+    messages: list[dict[str, str]],
+    model: str = DEFAULT_OLLAMA_MODEL,
+    base_url: str = DEFAULT_OLLAMA_BASE_URL,
+    max_tokens: int = 1024,
+) -> tuple[str, int, int, float]:
+    """
+    Call local Ollama API (/api/chat) with format="json" enforcement.
+    
+    Returns: (response_text, tokens_in, tokens_out, latency_ms)
+    """
+    import httpx
+
+    base_url = base_url.rstrip("/")
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": False,
+        "format": "json",
+        "options": {
+            "temperature": 0.0,
+            "num_predict": max_tokens,
+        },
+    }
+
+    start = time.perf_counter()
+    with httpx.Client(timeout=180.0) as client:
+        try:
+            response = client.post(f"{base_url}/api/chat", json=payload)
+            response.raise_for_status()
+        except httpx.ConnectError as e:
+            raise ConnectionError(
+                f"Could not connect to Ollama server at {base_url}.\n"
+                "Please make sure Ollama is running (`ollama serve`)."
+            ) from e
+        except httpx.HTTPStatusError as e:
+            if response.status_code == 404:
+                raise ValueError(
+                    f"Model '{model}' not found in Ollama.\n"
+                    f"Run `ollama pull {model}` to download it, or specify an available model."
+                ) from e
+            raise
+
+    latency_ms = (time.perf_counter() - start) * 1000
+    data = response.json()
+
+    text = data.get("message", {}).get("content", "")
+    tokens_in = data.get("prompt_eval_count", 0)
+    tokens_out = data.get("eval_count", 0)
+
+    return text, tokens_in, tokens_out, latency_ms
+
+
+def _call_openrouter(
+    messages: list[dict[str, str]],
+    api_key: str,
+    model_override: Optional[str] = None,
+    max_tokens: int = 1024,
+) -> tuple[str, int, int, float]:
     """
     Call OpenRouter API (OpenAI-compatible format).
     
@@ -318,7 +390,7 @@ def _call_openrouter(messages: list[dict[str, str]], api_key: str, max_tokens: i
     """
     import httpx
 
-    model = _get_model(api_key)
+    model = model_override or _get_model(api_key)
 
     start = time.perf_counter()
     with httpx.Client(timeout=60.0) as client:
@@ -483,22 +555,28 @@ def _validate_and_normalize(data: dict[str, Any], doc_type: str) -> dict[str, An
 
 def llm_extract_fields(
     doc: IngestedDocument,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    base_url: Optional[str] = None,
     max_retries: int = 5,
     base_delay_ms: float = 2000.0,
 ) -> dict[str, Any]:
     """
-    Extract structured fields from a document using OpenRouter LLM.
+    Extract structured fields from a document using local Ollama or OpenRouter LLM.
 
     Args:
         doc: Ingested document with raw text and type guess
+        provider: 'ollama' or 'openrouter' (defaults to LLM_PROVIDER env, or 'ollama')
+        model: Model name to use (e.g. 'llama3.2:3b' or 'minimax/minimax-m3:free')
+        base_url: Base URL for Ollama (defaults to http://localhost:11434)
         max_retries: Maximum retry attempts on validation failure
-        retry_delay_ms: Delay between retries (ms)
+        base_delay_ms: Base delay between retries (ms)
 
     Returns:
         Extracted fields as a dictionary
 
     Raises:
-        ValueError: If extraction fails after all retries
+        ValueError: If extraction fails after all retries or configuration is invalid
     """
     import random
     global metrics
@@ -507,29 +585,47 @@ def llm_extract_fields(
     if doc_type == "unknown":
         return {"doc_type": "unknown", "error": "Could not classify document type"}
 
-    # Get API key
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        raise ValueError(
-            "OPENROUTER_API_KEY not set. "
-            "Get a free key at https://openrouter.ai/keys "
-            "then set it in .env file or environment variable."
-        )
+    active_provider = (provider or get_default_provider()).lower()
+
+    if active_provider == "ollama":
+        active_model = model or os.environ.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
+        active_base_url = base_url or os.environ.get("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
+        api_key = None
+    elif active_provider == "openrouter":
+        api_key = os.environ.get("OPENROUTER_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "OPENROUTER_API_KEY not set. "
+                "Get a free key at https://openrouter.ai/keys "
+                "or run with Ollama locally: python run_pipeline.py --method llm --provider ollama"
+            )
+        active_model = model or _get_model(api_key)
+        active_base_url = None
+    else:
+        raise ValueError(f"Unknown LLM provider: {active_provider}. Choose 'ollama' or 'openrouter'.")
 
     messages = _build_prompt(doc_type, doc.raw_text)
 
-    logger.info(f"Extracting fields from {doc.doc_id}")
+    logger.info(f"Extracting fields from {doc.doc_id} using {active_provider} ({active_model})")
 
     last_error = None
     for attempt in range(max_retries + 1):
         try:
-            # Call OpenRouter API
-            response_text, tokens_in, tokens_out, latency_ms = _call_openrouter(
-                messages, api_key
-            )
+            if active_provider == "ollama":
+                response_text, tokens_in, tokens_out, latency_ms = _call_ollama(
+                    messages=messages,
+                    model=active_model,
+                    base_url=active_base_url,
+                )
+                cost_usd = 0.0
+            else:
+                response_text, tokens_in, tokens_out, latency_ms = _call_openrouter(
+                    messages=messages,
+                    api_key=api_key,
+                    model_override=active_model,
+                )
+                cost_usd = 0.0
 
-            # Free models have $0 cost
-            cost_usd = 0.0
             metrics.log_call(tokens_in, tokens_out, latency_ms, cost_usd)
 
             # Parse response

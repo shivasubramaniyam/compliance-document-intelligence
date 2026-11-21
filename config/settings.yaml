@@ -60,9 +60,15 @@ document_types:
       - status
 
 extraction:
-  # Phase 2: Will use fine-tuned NER / LLM
-  method: "rule_based"
+  method: "rule_based" # "rule_based" or "llm"
   spacy_model: "en_core_web_sm"
+  llm:
+    provider: "ollama" # "ollama" (local, no API key needed) or "openrouter"
+    ollama:
+      base_url: "http://localhost:11434"
+      model: "llama3.2:3b"
+    openrouter:
+      model: "minimax/minimax-m3:free"
 
 evaluation:
   output_dir: "data/processed/evaluation"

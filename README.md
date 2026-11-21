@@ -29,9 +29,13 @@ pip install -r requirements.txt
 # Phase 1: Rule-based extraction (no API key needed)
 python run_pipeline.py --method rule_based --skip-generation
 
-# Phase 2: LLM-based extraction (requires API key)
-export ANTHROPIC_API_KEY=your-key-here
+# Phase 2: LLM-based extraction with local Ollama (no API key needed!)
+ollama serve   # in a separate terminal
 python run_pipeline.py --method llm --validate --skip-generation
+
+# Phase 2: Alternatively with OpenRouter (cloud API)
+export OPENROUTER_API_KEY="sk-or-v1-your-key-here"
+python run_pipeline.py --method llm --provider openrouter --validate --skip-generation
 
 # Run tests
 pytest tests/ -v
